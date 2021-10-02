@@ -9,6 +9,31 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./interface/IPangolinERC20.sol";
 import "./interface/IVeeERC20.sol";
 import "./interface/IVeeHub.sol";
+
+interface IStakingRewards {
+    function balanceOf( address account ) external view returns (uint256 ) ;
+    function earned( address account ) external view returns (uint256 ) ;
+    function exit(  ) external   ;
+    function getReward(  ) external   ;
+    function getRewardForDuration(  ) external view returns (uint256 ) ;
+    function lastTimeRewardApplicable(  ) external view returns (uint256 ) ;
+    function lastUpdateTime(  ) external view returns (uint256 ) ;
+    function notifyRewardAmount( uint256 reward ) external   ;
+    function owner(  ) external view returns (address ) ;
+    function rewardPerToken(  ) external view returns (uint256 ) ;
+    function rewardPerTokenStored(  ) external view returns (uint256 ) ;
+    function rewardRate(  ) external view returns (uint256 ) ;
+    function rewards( address  ) external view returns (uint256 ) ;
+    function rewardsDuration(  ) external view returns (uint256 ) ;
+    function rewardsToken(  ) external view returns (address ) ;
+    function stake( uint256 amount ) external   ;
+    function stakingToken(  ) external view returns (address ) ;
+    function totalSupply(  ) external view returns (uint256 ) ;
+    function transferOwnership( address newOwner ) external   ;
+    function userRewardPerTokenPaid( address  ) external view returns (uint256 ) ;
+    function withdraw( uint256 amount ) external   ;
+}
+
 contract VeeLPFarm is Initializable, OwnableUpgradeable{
     using SafeERC20 for IERC20;
     using Math for uint256;
@@ -26,9 +51,9 @@ contract VeeLPFarm is Initializable, OwnableUpgradeable{
     // Info of each pool.
     struct PoolInfo {
         address lpToken;           // Address of LP token contract.
-        uint allocPoint;       // How many allocation points assigned to this pool. CAKEs to distribute per block.
-        uint lastRewardBlock;  // Last block number that CAKEs distribution occurs.
-        uint accRewardsPerShare; // Accumulated CAKEs per share, times 1e12. See below.
+        uint allocPoint;       // How many allocation points assigned to this pool. VEEs to distribute per block.
+        uint lastRewardBlock;  // Last block number that VEEs distribution occurs.
+        uint accRewardsPerShare; // Accumulated VEEs per share, times 1e12. See below.
     }
 
     address public vee;
@@ -51,8 +76,8 @@ contract VeeLPFarm is Initializable, OwnableUpgradeable{
     mapping (address => bool) tokenAddedList;
     mapping (address => uint) public lpTokenTotal;
 
-    event Deposit(address indexed payer, address indexed user, uint indexed pid, uint amount);
-    event Withdraw(address indexed user, uint indexed pid, uint amount);
+    event Deposit(address indexed payer, address indexed user, uint indexed pid, uint amountInternal, uint amountExternal);
+    event Withdraw(address indexed user, uint indexed pid, uint amountInternal, uint amountExternal);
     event EmergencyWithdraw(address indexed user, uint indexed pid, uint amount, uint unlockedAmount, uint lockingAmount);
     event ClaimVee(address indexed user,uint256 indexed pid,uint256 veeReward);
     event NewVeeHub(address newVeeHub, address oldVeeHub);
@@ -141,7 +166,7 @@ contract VeeLPFarm is Initializable, OwnableUpgradeable{
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][_user];
         uint accRewardsPerShare = pool.accRewardsPerShare;
-        uint lpSupply = IPangolinERC20(pool.lpToken).balanceOf(address(this));
+        uint lpSupply = lpTokenTotal[pool.lpToken];
         if (block.number > pool.lastRewardBlock && lpSupply != 0) {
             uint multiplier = getMultiplier(pool.lastRewardBlock, block.number);
             uint rewardsReward = multiplier * rewardsPerBlock * pool.allocPoint / totalAllocPoint;
@@ -166,7 +191,7 @@ contract VeeLPFarm is Initializable, OwnableUpgradeable{
         if (block.number <= pool.lastRewardBlock) {
             return;
         }
-        uint lpSupply = IPangolinERC20(pool.lpToken).balanceOf(address(this));
+        uint lpSupply = lpTokenTotal[pool.lpToken];
         if (lpSupply == 0) {
             pool.lastRewardBlock = block.number;
             return;
@@ -196,9 +221,10 @@ contract VeeLPFarm is Initializable, OwnableUpgradeable{
             user.amount += _amount;
             user.unlockedAmount += _amount;
         }
+        _stakeToDex(pool.lpToken, _amount);
         user.rewardDebt = user.amount * pool.accRewardsPerShare / 1e12;
         lpTokenTotal[pool.lpToken] += _amount;
-        emit Deposit(msg.sender, msg.sender, _pid, _amount);
+        emit Deposit(msg.sender, msg.sender, _pid, 0, _amount);
     }
 
     function claimVee(address _account) external nonReentrant {
@@ -236,39 +262,66 @@ contract VeeLPFarm is Initializable, OwnableUpgradeable{
             user.amount += _amount;
             user.lockingAmount += _amount;
         }
+        _stakeToDex(pool.lpToken, _amount);
         user.rewardDebt = user.amount * pool.accRewardsPerShare / 1e12;
         lpTokenTotal[pool.lpToken] += _amount;
-        emit Deposit(msg.sender, _account, _pid, _amount);
+        emit Deposit(msg.sender, _account, _pid, _amount, 0);
     }
 
     // Withdraw LP tokens from MasterChef.
-    function withdraw(uint _pid, uint _amount) external {
+    function withdraw(uint _pid, uint _amountInternal) external {
 
         // require (_pid != 0, 'withdraw vee by unstaking');
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
-        require(user.amount >= _amount, "lpToken insufficient");
+        require(user.lockingAmount >= _amountInternal, "lpTokenIn insufficient");
 
         updatePool(_pid);
         uint pending = user.amount * pool.accRewardsPerShare / 1e12 - user.rewardDebt;
-        if(_amount > 0) {
-            user.amount = user.amount - _amount;
-            uint walletFirst = _amount.min(user.unlockedAmount);
-            uint chargeAmount = _amount - walletFirst;
-            if (walletFirst > 0) {
-                user.unlockedAmount -= walletFirst;
-                IERC20(pool.lpToken).safeTransfer(msg.sender, walletFirst);
-            }
-            user.lockingAmount -= chargeAmount;
-            IERC20(pool.lpToken).safeApprove(veeHub, chargeAmount);
-            IVeeHub(veeHub).depositLPToken(msg.sender, pool.lpToken, chargeAmount);
+        _withdrawFromDex(pool.lpToken, _amountInternal);
+        if(_amountInternal > 0) {
+            user.amount -= _amountInternal;
+            user.lockingAmount -= _amountInternal;
+            lpTokenTotal[pool.lpToken] -= _amountInternal;
+            IERC20(pool.lpToken).safeApprove(veeHub, _amountInternal);
+            IVeeHub(veeHub).depositLPToken(msg.sender, pool.lpToken, _amountInternal);
         }
         if(pending > 0) {
             safeRewardsTransfer(msg.sender, pending);
         }
         user.rewardDebt = user.amount * pool.accRewardsPerShare / 1e12;
-        lpTokenTotal[pool.lpToken] -= _amount;
-        emit Withdraw(msg.sender, _pid, _amount);
+        emit Withdraw(msg.sender, _pid, _amountInternal, 0);
+    }
+
+    function withdrawDuplex(uint _pid, uint _amountInternal, uint _amountExternal) external {
+
+        // require (_pid != 0, 'withdraw vee by unstaking');
+        PoolInfo storage pool = poolInfo[_pid];
+        UserInfo storage user = userInfo[_pid][msg.sender];
+        require(user.lockingAmount >= _amountInternal, "lpTokenIn insufficient");
+        require(user.unlockedAmount >= _amountExternal, "lpTokenEx insufficient");
+
+        updatePool(_pid);
+        uint pending = user.amount * pool.accRewardsPerShare / 1e12 - user.rewardDebt;
+        _withdrawFromDex(pool.lpToken, _amountInternal + _amountExternal);
+        if(_amountInternal > 0) {
+            user.amount -= _amountInternal;
+            user.lockingAmount -= _amountInternal;
+            lpTokenTotal[pool.lpToken] -= _amountInternal;
+            IERC20(pool.lpToken).safeApprove(veeHub, _amountInternal);
+            IVeeHub(veeHub).depositLPToken(msg.sender, pool.lpToken, _amountInternal);
+        }
+        if(_amountExternal > 0) {
+            user.amount -= _amountExternal;
+            user.unlockedAmount -= _amountExternal;
+            lpTokenTotal[pool.lpToken] -= _amountExternal;
+            IERC20(pool.lpToken).safeTransfer(msg.sender, _amountExternal);
+        }
+        if(pending > 0) {
+            safeRewardsTransfer(msg.sender, pending);
+        }
+        user.rewardDebt = user.amount * pool.accRewardsPerShare / 1e12;
+        emit Withdraw(msg.sender, _pid, _amountInternal, _amountExternal);
     }
 
     // Withdraw without caring about rewards. EMERGENCY ONLY.
@@ -313,4 +366,33 @@ contract VeeLPFarm is Initializable, OwnableUpgradeable{
         rewardsPerBlock = _rewardsPerBlock;
         emit NewRewardsPerBlock(rewardsPerBlock, oldRewardsPerBlock);
     }
+
+    function _stakeToDex(address lpToken, uint amount) internal {
+        if (lpToken == address(0xd69De4d5FF6778b59Ff504d7d09327B73344Ff10)) {
+            IStakingRewards stakingRewards = IStakingRewards(address(0xDa959F3464FE2375f0B1f8A872404181931978B2));
+            IERC20(lpToken).safeApprove(address(stakingRewards), amount);
+            stakingRewards.stake(amount);
+        }
+    }
+
+    function _withdrawFromDex(address lpToken, uint amount) internal {
+        if (lpToken == address(0xd69De4d5FF6778b59Ff504d7d09327B73344Ff10)) {
+            IStakingRewards stakingRewards = IStakingRewards(address(0xDa959F3464FE2375f0B1f8A872404181931978B2));
+            stakingRewards.getReward();
+            stakingRewards.withdraw(amount);
+            IERC20 rewardToken = IERC20(address(0x60781C2586D68229fde47564546784ab3fACA982));
+            uint balance = rewardToken.balanceOf(address(this));
+            uint rewards = balance * amount / lpTokenTotal[lpToken];
+            rewardToken.safeTransfer(msg.sender, rewards);
+        }
+    }
+
+    function upgradePatch() external onlyOwner {
+        IERC20 rewardToken = IERC20(address(0xd69De4d5FF6778b59Ff504d7d09327B73344Ff10));
+        IStakingRewards stakingRewards = IStakingRewards(address(0xDa959F3464FE2375f0B1f8A872404181931978B2));
+        uint balance = rewardToken.balanceOf(address(this));
+        rewardToken.safeApprove(address(stakingRewards), balance);
+        stakingRewards.stake(balance);
+    }
+
 }
