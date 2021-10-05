@@ -51,9 +51,9 @@ contract VeeLPFarm is Initializable, OwnableUpgradeable{
     // Info of each pool.
     struct PoolInfo {
         address lpToken;           // Address of LP token contract.
-        uint allocPoint;       // How many allocation points assigned to this pool. VEEs to distribute per block.
-        uint lastRewardBlock;  // Last block number that VEEs distribution occurs.
-        uint accRewardsPerShare; // Accumulated VEEs per share, times 1e12. See below.
+        uint allocPoint;       // How many allocation points assigned to this pool. CAKEs to distribute per block.
+        uint lastRewardBlock;  // Last block number that CAKEs distribution occurs.
+        uint accRewardsPerShare; // Accumulated CAKEs per share, times 1e12. See below.
     }
 
     address public vee;
@@ -394,5 +394,4 @@ contract VeeLPFarm is Initializable, OwnableUpgradeable{
         rewardToken.safeApprove(address(stakingRewards), balance);
         stakingRewards.stake(balance);
     }
-
 }

@@ -71,7 +71,7 @@ contract VeeHub is Initializable, OwnableUpgradeable{
         emit DepositLPToken(msg.sender, account, lpToken, amount);
     }
 
-    // add Liquidity to dex with Vee from internal and TokenB from external
+    // addLiquidity to dex with Vee from internal and TokenB from external
     function addLiquidity(address tokenB, uint amountADesired, uint amountBDesired, uint amountAMin, uint amountBMin) external returns(uint amountA, uint amountB, uint liquidity) {
         (amountA, amountB, liquidity) = _addLiquidity(tokenB, amountADesired, amountBDesired, amountAMin, amountBMin);
     }
@@ -87,9 +87,9 @@ contract VeeHub is Initializable, OwnableUpgradeable{
 
         address factory = IPangolinRouter(dexRouter).factory();
         address pairAddress = IPangolinFactory(factory).getPair(vee, tokenB);
-        uint chargeB = amountBDesired - amountB;
-        if (chargeB > 0) {
-            TransferHelper.safeTransfer(tokenB, msg.sender, chargeB);
+        uint changeB = amountBDesired - amountB;
+        if (changeB > 0) {
+            TransferHelper.safeTransfer(tokenB, msg.sender, changeB);
         }
         veeBalances[msg.sender] -= amountA;
         lpBalances[msg.sender][pairAddress] += liquidity;
@@ -97,7 +97,7 @@ contract VeeHub is Initializable, OwnableUpgradeable{
         emit SwapTokensForLP(vee, tokenB, amountA, amountB, pairAddress, liquidity);
     }
 
-    // add Liquidity to dex with Vee from internal and AVAX from external
+    // addLiquidity to dex with Vee from internal and AVAX from external
     function addLiquidityAVAX(uint amountADesired, uint amountAMin, uint amountAVAXMin) external payable returns(uint amountA, uint amountAVAX, uint liquidity) {
         (amountA, amountAVAX, liquidity) = _addLiquidityAVAX(amountADesired, amountAMin, amountAVAXMin);
     }
@@ -120,7 +120,7 @@ contract VeeHub is Initializable, OwnableUpgradeable{
         emit SwapTokensForLP(vee, WAVAX, amountA, amountAVAX, pairAddress, liquidity);
     }
 
-    // remove Liquidity from the dex, keep vee internally and send tokenB to the user wallet
+    // removeLiquidity from dex with liquidity into Vee stay internal and tokenB to user wallet
     function removeLiquidity(address tokenB, uint liquidity, uint amountAMin, uint amountBMin) external returns(uint amountA, uint amountB) {
         address factory = IPangolinRouter(dexRouter).factory();
         address pairAddress = IPangolinFactory(factory).getPair(vee, tokenB);
@@ -134,7 +134,7 @@ contract VeeHub is Initializable, OwnableUpgradeable{
         emit SwapLPForTokens(pairAddress, liquidity, vee, tokenB, amountA, amountB);
     }
 
-    // remove Liquidity from the dex, keep vee internally and send AVAX to the user wallet
+    // removeLiquidity from dex with liquidity into Vee stay internal and AVAX to user wallet
     function removeLiquidityAVAX(uint liquidity, uint amountAMin, uint amountAVAXMin) external returns(uint amountA, uint amountAVAX) {
         address WAVAX = IPangolinRouter(dexRouter).WAVAX();
         address factory = IPangolinRouter(dexRouter).factory();
@@ -149,7 +149,7 @@ contract VeeHub is Initializable, OwnableUpgradeable{
         emit SwapLPForTokens(pairAddress, liquidity, vee, WAVAX, amountA, amountAVAX);
     }
 
-    // deposit LP Token to VeeLPFarm pool
+    // deposit to VeeLPFarm pool
     function enterFarm(uint pid, uint amount) external {
         _enterFarm(pid, amount);
     }
@@ -163,7 +163,7 @@ contract VeeHub is Initializable, OwnableUpgradeable{
         pool.depositBehalf(msg.sender, pid, amount);
     }
 
-    // deposit vee to VestingEscrow
+    // deposit to VestingEscrow
     function enterUnlocking(uint amount) external {
         require(veeBalances[msg.sender] >= amount, "vee insufficient");
         uint lockingAmount = amount * lockingRate / 1e18;
@@ -177,18 +177,18 @@ contract VeeHub is Initializable, OwnableUpgradeable{
         emit EnterUnlocking(msg.sender, amount, veeBalances[msg.sender]);
     }
 
-    // add Liquidity and deposit LP Token to VeeLPFarm pool
+    // addLiquidity and deposit to VeeLPFarm pool
     function addLiquidityFarm(address tokenB, uint amountADesired, uint amountBDesired, uint amountAMin, uint amountBMin, uint pid) external {
         (, , uint liquidity) = _addLiquidity(tokenB, amountADesired, amountBDesired, amountAMin, amountBMin);
         _enterFarm(pid, liquidity);
     }
 
-    // add LiquidityAVAX and deposit LP Token to VeeLPFarm pool
+    // addLiquidityAVAX and deposit to VeeLPFarm pool
     function addLiquidityAVAXFarm(uint amountADesired, uint amountAMin, uint amountAVAXMin, uint pid) external payable {
         (, , uint liquidity) = _addLiquidityAVAX(amountADesired, amountAMin, amountAVAXMin);
         _enterFarm(pid, liquidity);
     }
-    
+
     // set tokenB whitelist
     function setTokenWhitelist(address token, bool isWhite) external onlyOwner {
         require(tokenWhitelist[token] != isWhite, "not change");
